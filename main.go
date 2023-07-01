@@ -1,7 +1,6 @@
 package main
 
 import (
-	"fmt"
 	"io"
 	"log"
 	"net/http"
@@ -21,7 +20,12 @@ func main() {
 	app.Use(logger.New())
 	app.Use(recover.New())
 
+	// Serve static files from the "public" directory
+	app.HandleDir("/", "./public")
+
 	app.Post("/upload", uploadHandler)
+
+	app.Get("/stream/{fileName}", streamHandler)
 
 	app.Run(iris.Addr(":8080"))
 }
@@ -31,7 +35,10 @@ func uploadHandler(ctx iris.Context) {
 	file, info, err := ctx.FormFile("file")
 	if err != nil {
 		ctx.StatusCode(http.StatusBadRequest)
-		ctx.WriteString("Failed to get file from request.")
+		ctx.JSON(map[string]interface{}{
+			"success": false,
+			"message": "Failed to get file from request.",
+		})
 		return
 	}
 	defer file.Close()
@@ -40,7 +47,10 @@ func uploadHandler(ctx iris.Context) {
 	tempFile, err := os.CreateTemp("", "upload-*.temp")
 	if err != nil {
 		ctx.StatusCode(http.StatusInternalServerError)
-		ctx.WriteString("Failed to create temporary file.")
+		ctx.JSON(map[string]interface{}{
+			"success": false,
+			"message": "Failed to create temporary file.",
+		})
 		return
 	}
 	defer tempFile.Close()
@@ -49,7 +59,10 @@ func uploadHandler(ctx iris.Context) {
 	_, err = io.Copy(tempFile, file)
 	if err != nil {
 		ctx.StatusCode(http.StatusInternalServerError)
-		ctx.WriteString("Failed to copy file to temporary location.")
+		ctx.JSON(map[string]interface{}{
+			"success": false,
+			"message": "Failed to copy file to temporary location.",
+		})
 		return
 	}
 
@@ -59,55 +72,54 @@ func uploadHandler(ctx iris.Context) {
 	err = ffmpegCmd.Run()
 	if err != nil {
 		ctx.StatusCode(http.StatusInternalServerError)
-		ctx.WriteString("Failed to convert file to MP4.")
+		ctx.JSON(map[string]interface{}{
+			"success": false,
+			"message": "Failed to convert file to MP4.",
+		})
 		return
 	}
 
-	// Convert the MP4 file to WebP using FFmpeg
-	webpFile := strings.TrimSuffix(tempFile.Name(), ".temp") + ".webp"
-	ffmpegCmd = exec.Command("ffmpeg", "-i", mp4File, webpFile)
+	// Convert the MP4 file to WebM using FFmpeg
+	webmFile := strings.TrimSuffix(tempFile.Name(), ".temp") + ".webm"
+	ffmpegCmd = exec.Command("ffmpeg", "-i", mp4File, "-c:v", "libvpx", "-c:a", "libvorbis", "-cpu-used", "5", "-deadline", "realtime", webmFile)
 	err = ffmpegCmd.Run()
 	if err != nil {
 		ctx.StatusCode(http.StatusInternalServerError)
-		ctx.WriteString("Failed to convert MP4 to WebP.")
+		ctx.JSON(map[string]interface{}{
+			"success": false,
+			"message": "Failed to convert MP4 to WebM.",
+		})
 		return
 	}
 
-	// Stream the converted file to the client
-	err = streamFile(ctx, webpFile)
-	if err != nil {
-		ctx.StatusCode(http.StatusInternalServerError)
-		ctx.WriteString("Failed to stream file to client.")
-		return
-	}
+	// Provide the preview URL to the client
+	previewURL := "/stream/" + filepath.Base(webmFile)
 
-	// Clean up the temporary files
-	err = os.Remove(tempFile.Name())
-	if err != nil {
-		log.Println("Failed to remove temporary file:", err)
-	}
-	err = os.Remove(mp4File)
-	if err != nil {
-		log.Println("Failed to remove MP4 file:", err)
-	}
-	err = os.Remove(webpFile)
-	if err != nil {
-		log.Println("Failed to remove WebP file:", err)
-	}
+	ctx.StatusCode(http.StatusOK)
+	ctx.JSON(map[string]interface{}{
+		"success":    true,
+		"message":    "File uploaded and converted successfully.",
+		"previewURL": previewURL,
+	})
 }
 
-func streamFile(ctx iris.Context, filePath string) error {
+func streamHandler(ctx iris.Context) {
+	fileName := ctx.Params().Get("fileName")
+
 	// Open the file
-	file, err := os.Open(filePath)
+	file, err := os.Open(fileName)
 	if err != nil {
-		return fmt.Errorf("failed to open file: %w", err)
+		ctx.StatusCode(http.StatusNotFound)
+		return
 	}
 	defer file.Close()
 
 	// Get file information
 	info, err := file.Stat()
 	if err != nil {
-		return fmt.Errorf("failed to get file information: %w", err)
+		log.Println("Failed to get file information:", err)
+		ctx.StatusCode(http.StatusInternalServerError)
+		return
 	}
 
 	// Set the Content-Length header
@@ -115,19 +127,18 @@ func streamFile(ctx iris.Context, filePath string) error {
 
 	// Set the Content-Type header based on the file extension
 	contentType := "application/octet-stream"
-	switch strings.ToLower(filepath.Ext(filePath)) {
+	switch strings.ToLower(filepath.Ext(fileName)) {
 	case ".mp4":
 		contentType = "video/mp4"
-	case ".webp":
-		contentType = "image/webp"
+	case ".webm":
+		contentType = "video/webm"
 	}
 	ctx.ResponseWriter().Header().Set("Content-Type", contentType)
 
 	// Copy the file to the response writer
 	_, err = io.Copy(ctx.ResponseWriter(), file)
 	if err != nil {
-		return fmt.Errorf("failed to copy file to response writer: %w", err)
+		log.Println("Failed to copy file to response writer:", err)
+		ctx.StatusCode(http.StatusInternalServerError)
 	}
-
-	return nil
 }
