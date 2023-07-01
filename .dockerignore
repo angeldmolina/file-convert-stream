@@ -1,0 +1,3 @@
+# Files and directories to ignore when copying to the Docker image
+Dockerfile
+client/node_modules
