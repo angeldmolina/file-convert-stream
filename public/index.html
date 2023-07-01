@@ -1,0 +1,51 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>File Upload and Stream Preview</title>
+</head>
+<body>
+    <h1>File Upload and Stream Preview</h1>
+    <form id="uploadForm" enctype="multipart/form-data">
+        <input type="file" name="file" id="fileInput" accept=".webm, .mp4">
+        <button type="submit">Upload</button>
+    </form>
+    <video id="previewVideo" controls></video>
+
+    <script>
+        const uploadForm = document.getElementById("uploadForm");
+        const fileInput = document.getElementById("fileInput");
+        const previewVideo = document.getElementById("previewVideo");
+
+        uploadForm.addEventListener("submit", (event) => {
+            event.preventDefault();
+
+            const file = fileInput.files[0];
+            if (!file) {
+                alert("Please select a file.");
+                return;
+            }
+
+            const formData = new FormData();
+            formData.append("file", file);
+
+            fetch("/upload", {
+                method: "POST",
+                body: formData
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.success) {
+                    previewVideo.src = data.previewURL;
+                    previewVideo.play();
+                } else {
+                    alert(data.message);
+                }
+            })
+            .catch(error => {
+                console.error("Error:", error);
+                alert("An error occurred while uploading the file.");
+            });
+        });
+    </script>
+</body>
+</html>
