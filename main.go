@@ -37,6 +37,7 @@ func uploadHandler(ctx iris.Context) {
 		ctx.StatusCode(http.StatusBadRequest)
 		ctx.JSON(map[string]interface{}{
 			"success": false,
+			"info": info,
 			"message": "Failed to get file from request.",
 		})
 		return
